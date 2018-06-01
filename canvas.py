@@ -12,6 +12,7 @@ base_url = "https://canvas.tufts.edu/api/v1/courses/"
 css_link = "https://drive.google.com/uc?export=download&id=17VN8-ECPGb3KtgI8JkCUAluo44-ZSt6o"
 bg_link = "https://drive.google.com/uc?export=download&id=1qjwWCv5xYxyTJf2iqO8n0qJiQlkmAjF2"
 
+
 """
 creates a dictionary of students and their user_ids from the canvas api
 """
@@ -43,6 +44,7 @@ def get_ass_and_groups(canvas_url, token):
     token_text = "?access_token=%s" %token
     code = link.split("/")[-1]
     param = "/discussion_topics"
+    param1 = "/assignments"
     pages = "&per_page=60"
     
     while True:
@@ -54,7 +56,18 @@ def get_ass_and_groups(canvas_url, token):
     
     assign_codes = {x["id"]:x["assignment"]["assignment_group_id"] for x in r.json() if "assignment" in x}
     
-    return assign_codes
+    # get final assignment code
+    while True:
+        try:
+            r = requests.get(base_url + code  + param1 + token_text + pages)
+            break
+        except requests.exceptions.RequestException:
+            print("get assignments request failed, trying again")
+    
+    final = r.json()[-1]
+    if "discussion_topic" not in final:
+        final_code = final["id"]
+    return (assign_codes, final_code)
 
 """
 extracts all assignment submissions for the student and writes them in html format to a file 
@@ -64,7 +77,7 @@ student = student id
 assigns = dictionary of assignment codes and groups
 
 """
-def readwork(name, student, assigns, canvas_url, token):
+def readwork(name, student, assigns, canvas_url, token, final):
     link = canvas_url
     if link[0:8] != "https://":
         return "link invalid, try again with 'https://' before the link"
@@ -74,8 +87,6 @@ def readwork(name, student, assigns, canvas_url, token):
     param1 = "/view"
     param2 = "/assignment_groups"
     
-    
-    
     web_intro = "<html><head><title>Research data</title><link rel='stylesheet' href='files/style.css'/></head><body><div class='content'>"
      
     if not os.path.isdir("%s/files"%name):
@@ -84,14 +95,7 @@ def readwork(name, student, assigns, canvas_url, token):
     fh = open(name + "/" + name + ".html", "w+")
     fh.write(web_intro)
     fh.close()
-    
-    #create files folder
-    
-    
-#    tempfile = open(name + "/files/temp.txt", "w+")
-#    tempfile.write("this is a tempfile")
-#    tempfile.close()
-    
+       
     #download stylesheet and background image
     while True:
             try:
@@ -154,10 +158,45 @@ def readwork(name, student, assigns, canvas_url, token):
                     fh.write( "<p><a href='%s' class='attach'>%s</a></p>" %(curr_att[key], key) )
                 break
         
-        
+    get_final(student, fh, final, code, token)   
     fh.write("</div></body></html>")
     fh.close()
     clean_up(name)
+    
+"""
+this function adds the final project to the file for classes that have a final 
+project as an assignment not a discussion
+"""
+def get_final(student, fh, final_code, code, token):
+    
+    if final_code == 0:
+        return
+    final_code = "/" + str(final_code)
+    token_text = "?access_token=%s" %token
+    param = "/assignments"
+    param1 = "/submissions"
+    pages = "&per_page=60"
+    
+    while True:
+        try:
+            r = requests.get(base_url + code  + param + final_code + param1 + token_text + pages)
+            break
+        except requests.exceptions.RequestException:
+            print("get assignments request failed, trying again")
+    for i in r.json():
+        if i['user_id'] == student:
+            fh.write("<h2>Final Project</h2>")
+            if i["submission_type"] == "online_url":
+                fh.write("<a href='%s'>Final Project here</a>"%i["url"])
+            elif i["submission_type"] == "online_text_entry":
+                fh.write(i["body"])
+            elif i["submission_type"] == "online_upload":
+                curr_att = {x["display_name"]: x["url"] for x in i["attachments"]}
+                fh.write("<h4>Attachments</h4>")
+                for key in curr_att:
+                    fh.write( "<p><a href='%s' class='attach'>%s</a></p>" %(curr_att[key], key) )
+            break
+    
 
 """
     this function takes a html file and downloads all media files from it into 
@@ -222,7 +261,7 @@ def clean_up(filename):
                att[i]['href'] = new_name
                break
             except requests.exceptions.RequestException:
-                print("get assignment title request failed, trying again..")
+                print("attachment download failed, trying again..")
         
     fh.close()
     fh = open(filename + "/" + filename + ".html", "w", encoding='utf-8')
@@ -277,12 +316,12 @@ class App(Frame):
         
         print("Getting Assignment codes for each week....\n")
         self.logbox.insert( END, "Getting Assignments for each week....\n")
-        ass_codes = get_ass_and_groups(url, token)
+        ass_codes, final = get_ass_and_groups(url, token)
         
         for i in student_list:
             print("Getting Assignments for %s........\n" % i)
             self.logbox.insert( END, "Getting Assignments for %s\n" % i)
-            readwork(i, student_list[i], ass_codes, url, token)
+            readwork(i, student_list[i], ass_codes, url, token, final)
         
         print("*****\nDONE, you can delete the people you do not need\n*****")
         self.logbox.insert( END, "DONE, you can delete the people you do not need\n")
